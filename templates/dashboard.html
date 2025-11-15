@@ -3,25 +3,26 @@
 
 {% block content %}
 <div class="container-fluid mt-4 px-4">
+
     <!-- Cabeçalho -->
     <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-        <div class="d-flex align-items-center flex-wrap gap-3">
-            <h2 class="fw-bold text-primary mb-0">📊 Dashboard de Produção</h2>
-            <div class="d-flex flex-wrap gap-2 ms-3">
-                <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('PTH')">PTH</button>
-                <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('SMT')">SMT</button>
-                <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('IM')">IM</button>
-                <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('PA')">PA</button>
-                <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('ESTOQUE')">Estoque</button>
-                <button class="btn btn-outline-secondary btn-sm fw-bold btn-setor" onclick="filterBySetor('TODOS')">Mostrar Todos</button>
-            </div>
+        <h2 class="fw-bold text-primary mb-0">📊 Dashboard de Produção</h2>
+        <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('PTH')">PTH</button>
+            <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('SMT')">SMT</button>
+            <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('IM')">IM</button>
+            <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('PA')">PA</button>
+            <button class="btn btn-outline-dark btn-sm fw-bold btn-setor" onclick="filterBySetor('ESTOQUE')">Estoque</button>
+            <button class="btn btn-outline-secondary btn-sm fw-bold btn-setor" onclick="filterBySetor('TODOS')">Mostrar Todos</button>
         </div>
     </div>
 
     <!-- Filtros de status -->
     <div class="d-flex justify-content-start flex-wrap gap-2 mb-4">
-        <button class="btn btn-outline-success btn-sm fw-bold btn-status" onclick="filterByStatus('AGUARDANDO')">🕓 Aguardando Produção</button>
-        <button class="btn btn-outline-info btn-sm fw-bold btn-status" onclick="filterByStatus('DISPONIVEL')">✅ Placas Disponíveis</button>
+        <button class="btn btn-outline-warning btn-sm fw-bold btn-status" onclick="filterByStatus('AGUARDANDO')">🕓 Aguardando</button>
+        <button class="btn btn-outline-success btn-sm fw-bold btn-status" onclick="filterByStatus('DISPONIVEL')">✅ Disponível</button>
+        <button class="btn btn-outline-info btn-sm fw-bold btn-status" onclick="filterByStatus('EXPEDIDO')">📦 Expedido</button>
+        <button class="btn btn-outline-secondary btn-sm fw-bold btn-status" onclick="filterByStatus('TODOS')">Mostrar Todos</button>
     </div>
 
     <!-- TOTAL GERAL -->
@@ -31,110 +32,102 @@
 
     <!-- Tabela -->
     <div class="table-responsive shadow-sm rounded-4 bg-light p-3">
-        <table class="table table-hover align-middle" id="dashboardTable">
+        <table class="table table-hover table-bordered align-middle" id="dashboardTable">
             <thead class="table-primary text-center">
                 <tr>
                     <th>Modelo</th>
                     <th>Código</th>
+                    <th>Setor</th>
                     <th>Fase</th>
                     <th>Saldo</th>
                 </tr>
             </thead>
-            <tbody>,
-            {% for item in data %}
-                {% for saldo in item.saldo_setores %}
-                <tr 
-                    class="text-center"
-                    data-setor="{{ saldo.setor }}"
-                    data-status="{{ saldo.status }}"
-                    data-fase="{{ saldo.fase }}">
-                <td class="fw-bold">{{ item.model.model_name }}</td>
-                <td>{{ item.model.code }}</td>
-                <td class="text-center">{{ saldo.fase or '-' }}</td>
-                <td class="text-center fw-semibold">{{ saldo.saldo }}</td>
-                </tr>
+            <tbody>
+                {% for item in data %}
+                    {% for saldo in item.saldo_setores %}
+                    <tr class="text-center" 
+                        data-setor="{{ saldo.setor }}"
+                        data-status="{{ saldo.status }}">
+                        <td class="fw-bold">{{ item.model.model_name }}</td>
+                        <td>{{ item.model.code }}</td>
+                        <td>{{ saldo.setor }}</td>
+                        <td>
+                            {% if saldo.status == "AGUARDANDO" %}
+                                <span class="badge bg-warning text-dark">{{ saldo.fase }}</span>
+                            {% elif saldo.status == "DISPONIVEL" %}
+                                <span class="badge bg-success">{{ saldo.fase }}</span>
+                            {% elif saldo.status == "EXPEDIDO" %}
+                                <span class="badge bg-info text-dark">{{ saldo.fase }}</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ saldo.fase }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="fw-semibold">{{ saldo.saldo }}</td>
+                    </tr>
+                    {% endfor %}
                 {% endfor %}
-            {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
 
 <script>
-  // estados atuais dos filtros
-  let currentSetor = 'TODOS';
-  let currentStatus = 'TODOS';
+let currentSetor = 'TODOS';
+let currentStatus = 'TODOS';
 
-  // pega todas as linhas (cache)
-  const getRows = () => Array.from(document.querySelectorAll('#dashboardTable tbody tr'));
+const getRows = () => Array.from(document.querySelectorAll('#dashboardTable tbody tr'));
 
-  function applyFilters() {
+function applyFilters() {
     const rows = getRows();
     rows.forEach(row => {
-      const rowSetor = (row.dataset.setor || 'SEM SETOR').toString().trim();
-      const rowStatus = (row.dataset.status || '').toString().trim();
-
-      // condição setor
-      const okSetor = (currentSetor === 'TODOS') || (rowSetor === currentSetor);
-      // condição status
-      const okStatus = (currentStatus === 'TODOS') || (rowStatus === currentStatus);
-
-      // mostra apenas se BOTH true (interseção)
-      row.style.display = (okSetor && okStatus) ? '' : 'none';
+        const rowSetor = (row.dataset.setor || 'SEM SETOR').toString().trim();
+        const rowStatus = (row.dataset.status || '').toString().trim();
+        const okSetor = (currentSetor === 'TODOS') || (rowSetor === currentSetor);
+        const okStatus = (currentStatus === 'TODOS') || (rowStatus === currentStatus);
+        row.style.display = (okSetor && okStatus) ? '' : 'none';
     });
     calcularTotalGeral();
-  }
+}
 
-  // ativa/desativa classe active nos botões de setor
-  function setActiveSetorBtn(setor) {
+function setActiveSetorBtn(setor) {
     document.querySelectorAll('.btn-setor').forEach(btn => btn.classList.remove('active'));
     const clicked = document.querySelector(`[onclick="filterBySetor('${setor}')"]`);
     if (clicked) clicked.classList.add('active');
-  }
+}
 
-  // ativa/desativa classe active nos botões de status
-  function setActiveStatusBtn(status) {
+function setActiveStatusBtn(status) {
     document.querySelectorAll('.btn-status').forEach(btn => btn.classList.remove('active'));
     const clicked = document.querySelector(`[onclick="filterByStatus('${status}')"]`);
     if (clicked) clicked.classList.add('active');
-  }
+}
 
-  // --- Filtro por setor (mantém estado) ---
-  function filterBySetor(setor) {
+function filterBySetor(setor) {
     currentSetor = setor;
     setActiveSetorBtn(setor);
     applyFilters();
-  }
+}
 
-  // --- Filtro por status (mantém estado) ---
-  function filterByStatus(status) {
+function filterByStatus(status) {
     currentStatus = status;
     setActiveStatusBtn(status);
     applyFilters();
-  }
+}
 
- function calcularTotalGeral() {
+function calcularTotalGeral() {
     let total = 0;
-    const rows = document.querySelectorAll('#dashboardTable tbody tr');
-
-    rows.forEach(row => {
-        if (row.style.display !== 'none') {  // só soma linhas visíveis
-            const saldo = parseInt(row.querySelector('td:nth-child(4)').innerText) || 0;
+    getRows().forEach(row => {
+        if (row.style.display !== 'none') {
+            const saldo = parseInt(row.querySelector('td:nth-child(5)').innerText) || 0;
             total += saldo;
         }
     });
-
     document.getElementById("totalGeralBox").innerText = "Total Geral: " + total;
 }
 
-
-  // opcional: inicializa os botões "Mostrar Todos" como ativos
- document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', () => {
     setActiveSetorBtn('TODOS');
     setActiveStatusBtn('TODOS');
     applyFilters();
-    calcularTotalGeral();   // <<< ADICIONE ESTA LINHA
 });
 </script>
-
 {% endblock %}

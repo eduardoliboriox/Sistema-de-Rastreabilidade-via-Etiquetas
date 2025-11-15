@@ -1,20 +1,37 @@
 {% extends "base.html" %}
 {% block title %}Movimentar Etiqueta{% endblock %}
-
 {% set show_header_content = true %}
 
 {% block content %}
-<div class="container mt-4" style="max-width: 700px;">
-    <h2 class="mb-4 text-center fw-bold text-primary">📦 Movimentar Etiqueta</h2>
 
+<style>
+/* Destaca o botão selecionado */
+.action-btn.active {
+    border: 3px solid #0d6efd; /* azul primário do Bootstrap */
+    background-color: #0d6efd !important;
+    color: white !important;
+    box-shadow: 0 0 10px rgba(13, 110, 253, 0.5);
+}
+</style>
+
+
+<div class="container mt-4" style="max-width: 760px;">
+
+    <h2 class="mb-4 text-center fw-bold text-primary">📦 Terminal de Movimentação</h2>
+
+    <!-- Formulário principal -->
     <form action="{{ url_for('movimentar') }}" method="post" class="card p-4 shadow-sm border-0 rounded-4 bg-light">
-        <div class="mb-3">
-            <label for="qr_code" class="form-label fw-bold">QR Code / Código da Etiqueta:</label>
-            <input type="text" name="qr_code" id="qr_code" class="form-control form-control-lg text-center" placeholder="Bipe o QR Code aqui" required autofocus>
+        
+        <!-- QR CODE -->
+        <div class="mb-4">
+            <label for="qr_code" class="form-label fw-bold">Bipe o QR Code:</label>
+            <input type="text" name="qr_code" id="qr_code" class="form-control form-control-lg text-center"
+                   placeholder="Bipe o QR Code aqui" required autofocus>
         </div>
 
-        <div class="mb-3">
-            <label for="ponto" class="form-label fw-bold">Selecione o Ponto de Marcação:</label>
+        <!-- PONTO -->
+        <div class="mb-4">
+            <label for="ponto" class="form-label fw-bold">Ponto de Marcação:</label>
             <select name="ponto" id="ponto" class="form-select form-select-lg" required>
                 <option value="">-- Escolher Ponto --</option>
                 <option value="Ponto-01">Ponto-01 • PTH </option>
@@ -27,63 +44,119 @@
             </select>
         </div>
 
-        <div class="mb-3">
-            <label for="acao" class="form-label fw-bold">Tipo de Ação:</label>
-            <select name="acao" id="acao" class="form-select form-select-lg" required>
-                <option value="">-- Escolher Ação --</option>
-                <option value="producao">✅ Produção</option>
-                <option value="recebimento">📥 Recebimento</option>
-            </select>
+        <!-- AÇÕES EM FORMATO DE BOTÕES GRANDES -->
+        <div class="mb-3 fw-bold">Selecione a Ação:</div>
+
+        <div class="row g-2 action-buttons">
+            <div class="col-6">
+                <button type="button" class="btn btn-primary btn-lg w-100 py-4 action-btn" data-value="producao">
+                    ✅ Produção
+                </button>
+            </div>
+            <div class="col-6">
+                <button type="button" class="btn btn-success btn-lg w-100 py-4 action-btn" data-value="recebimento">
+                    📥 Recebimento
+                </button>
+            </div>
+            <div class="col-6">
+                <button type="button" class="btn btn-warning btn-lg w-100 py-4 action-btn" data-value="cq">
+                    🧪 CQ / Liberar
+                </button>
+            </div>
+            <div class="col-6">
+                <button type="button" class="btn btn-secondary btn-lg w-100 py-4 action-btn" data-value="retrabalho">
+                    ♻ Retrabalho
+                </button>
+            </div>
+            <div class="col-12">
+                <button type="button" class="btn btn-danger btn-lg w-100 py-4 action-btn" data-value="rejeicao">
+                    🛑 Rejeição
+                </button>
+            </div>
         </div>
 
-        <div class="mb-3">
+        <!-- Campo oculto onde será armazenada a ação escolhida -->
+        <input type="hidden" name="acao" id="acao">
+
+        <!-- QUANTIDADE -->
+        <div class="mb-3 mt-4">
             <label for="quantidade" class="form-label fw-bold">Quantidade (opcional):</label>
-            <input type="number" name="quantidade" id="quantidade" class="form-control form-control-lg text-center" min="1" placeholder="Deixe em branco para usar a capacidade total da etiqueta">
+            <input type="number" name="quantidade" id="quantidade"
+                   class="form-control form-control-lg text-center" min="1"
+                   placeholder="Deixe vazio para usar a quantidade da etiqueta">
         </div>
 
-        <button type="submit" class="btn btn-primary btn-lg w-100 fw-bold py-3 mt-3">Registrar Movimentação</button>
+        <button type="submit" class="btn btn-primary btn-lg w-100 fw-bold py-3 mt-3">
+            Registrar Movimentação
+        </button>
     </form>
 
-    {% if message %}
-    <div class="alert alert-info text-center mt-4 fs-5 shadow-sm rounded-4">
-        {{ message }}
-    </div>
-    {% endif %}
-
-    {% if historico %}
-    <div class="card mt-5 shadow-sm border-0 rounded-4">
-        <div class="card-header fw-bold bg-secondary bg-gradient text-white rounded-top-4">
-            Últimas Movimentações
+    <!-- CARTÃO DE INFORMAÇÕES DA ETIQUETA -->
+    {% if label %}
+    <div class="card shadow-sm border-0 rounded-4 mt-4">
+        <div class="card-header bg-dark text-white fw-bold rounded-top-4">
+            📄 Informações da Etiqueta
         </div>
-        <ul class="list-group list-group-flush">
-            {% for mov in historico %}
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-                <span>
-                    <strong>{{ mov['ponto'] }}</strong> — {{ mov['acao']|capitalize }}
-                    <br>
-                    <small class="text-muted">{{ mov['data'] }}</small>
-                </span>
-                <span class="badge bg-primary fs-6">{{ mov['quantidade'] }} un.</span>
-            </li>
-            {% endfor %}
-        </ul>
+        <div class="card-body">
+            <p><strong>Modelo:</strong> {{ model['code'] }}</p>
+            <p><strong>Lote:</strong> {{ label['lote'] }}</p>
+            <p><strong>Setor atual:</strong> {{ label['setor_atual'] }}</p>
+            <p><strong>Fase:</strong> {{ label['fase'] }}</p>
+            <p><strong>Qtd disponível:</strong> {{ label['remaining'] }}</p>
+
+            {% if label['top_done'] is not none %}
+            <p><strong>Processamento:</strong>
+                TOP={{ label['top_done'] }} |
+                BOTTOM={{ label['bottom_done'] }}
+            </p>
+            {% endif %}
+        </div>
     </div>
     {% endif %}
 </div>
 
 <script>
-    // Foco automático no campo de QR Code ao carregar a página
-    document.addEventListener('DOMContentLoaded', () => {
-        const input = document.getElementById('qr_code');
-        input.focus();
+// Foco automático e comportamento do Enter (NÃO SUBMETER automaticamente)
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('qr_code');
+    const pontoSelect = document.getElementById('ponto');
+    const acaoHidden = document.getElementById('acao');
 
-        // Pressionar Enter envia o formulário automaticamente
-        input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                document.querySelector('form').submit();
+    input.focus();
+
+    // Se o scanner enviar Enter, não submeter.
+    // Em vez disso, movemos foco para o seletor de Ponto para que o operador escolha o PONTO.
+    input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            // se o ponto já estiver preenchido, movemos o foco para os botões de ação
+            if (pontoSelect && pontoSelect.value) {
+                // tenta focar o primeiro botão de ação
+                const firstAction = document.querySelector('.action-btn');
+                if (firstAction) firstAction.focus();
+            } else if (pontoSelect) {
+                pontoSelect.focus();
             }
-        });
+        }
     });
+
+    // Botões de ação -> selecionam o hidden input e (agora) NÃO submetem o form automaticamente;
+    // em vez disso, preenche o input escondido e foca no botão 'Registrar' para permitir revisão.
+        document.querySelectorAll('.action-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const acao = btn.getAttribute('data-value');
+                document.getElementById('acao').value = acao;
+
+                // opcional: adiciona uma classe visual de selecionado
+                document.querySelectorAll('.action-btn').forEach(b=>b.classList.remove('active'));
+                btn.classList.add('active');
+
+                // foca no botão de submit
+                const submitBtn = document.querySelector('button[type="submit"]');
+                if (submitBtn) submitBtn.focus();
+            });
+        });
+});
 </script>
+
 {% endblock %}

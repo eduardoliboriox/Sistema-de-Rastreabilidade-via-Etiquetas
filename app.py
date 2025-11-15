@@ -4,6 +4,7 @@ from datetime import datetime
 import sqlite3, os, qrcode
 from io import BytesIO
 import socket
+import re
 
 app = Flask(__name__)
 app.secret_key = "chave_super_secreta_trocar"
@@ -93,12 +94,17 @@ def add_missing_column():
     if "setor" not in columns:
         c.execute("ALTER TABLE models ADD COLUMN setor TEXT;")
 
-    # ➕ Nova coluna fase
+    # ➕ Nova coluna fase (existente em seu código)
     if "fase" not in columns:
         c.execute("ALTER TABLE models ADD COLUMN fase TEXT;")
 
-    conn.commit()
+    # ➕ Nova coluna que define se o modelo é TOP_ONLY ou TOP_BOTTOM
+    if "phase_type" not in columns:
+        c.execute("ALTER TABLE models ADD COLUMN phase_type TEXT DEFAULT 'TOP_ONLY';")
+
+    conn.commit()   
     conn.close()
+
 
 
 def add_missing_table_labels():
@@ -118,6 +124,9 @@ def add_missing_table_labels():
                 linked_label_id INTEGER,
                 setor_atual TEXT,
                 fase TEXT,
+                top_done INTEGER DEFAULT 0,
+                bottom_done INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'ATIVO',
                 FOREIGN KEY(model_id) REFERENCES models(id),
                 FOREIGN KEY(linked_label_id) REFERENCES labels(id)
             )
@@ -136,6 +145,14 @@ def add_missing_table_labels():
             c.execute("ALTER TABLE labels ADD COLUMN remaining INTEGER;")
             # Inicializa remaining com capacidade_magazine para registros antigos
             c.execute("UPDATE labels SET remaining = capacidade_magazine WHERE remaining IS NULL;")
+        if "top_done" not in columns:
+            c.execute("ALTER TABLE labels ADD COLUMN top_done INTEGER DEFAULT 0;")
+        if "bottom_done" not in columns:
+            c.execute("ALTER TABLE labels ADD COLUMN bottom_done INTEGER DEFAULT 0;")
+        if "status" not in columns:
+            c.execute("ALTER TABLE labels ADD COLUMN status TEXT DEFAULT 'ATIVO';")
+        if "updated_at" not in columns:
+            c.execute("ALTER TABLE labels ADD COLUMN updated_at TEXT;")
         conn.commit()
     conn.close()
 
@@ -264,15 +281,17 @@ def new():
         try:
             conn.execute(
                 """INSERT INTO models 
-                (code, model_name, cliente, linha, setor, fase, turno, data, lote, quantidade, revisora, horario, po, op, status_cq, processo, obs, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (code, model_name, cliente, linha, setor, fase, phase_type, turno, data, lote, quantidade, revisora, horario, po, op, status_cq, processo, obs, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                 (
                     f.get("code", ""),
                     f.get("model_name", ""),
                     f.get("cliente", ""),
                     f.get("linha", ""),
                     f.get("setor", ""),
-                    f.get("fase", ""),  # 👈 agora na posição correta
+                    f.get("fase", ""),  
+                    f.get("phase_type", "TOP_ONLY"), 
                     f.get("turno", ""),
                     f.get("data") or datetime.now().strftime("%d/%m/%Y"),
                     f"{f.get('lote_num', '').strip()} / {f.get('lote_padrao', '').strip()}",
@@ -297,50 +316,94 @@ def new():
         return redirect(url_for("index"))
     return render_template("form.html", model=None)
 
-
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
 def edit(id):
     conn = get_db()
-    model = conn.execute("SELECT * FROM models WHERE id=?", (id,)).fetchone()
-    if not model:
-        abort(404)
+    try:
+        model = conn.execute("SELECT * FROM models WHERE id=?", (id,)).fetchone()
+        if not model:
+            conn.close()
+            abort(404)
 
-    if request.method == "POST":
-        f = request.form
-        conn.execute("""
-            UPDATE models 
-            SET code=?, model_name=?, cliente=?, linha=?, setor=?, fase=?, turno=?, data=?, lote=?, quantidade=?, 
-                revisora=?, horario=?, po=?, op=?, status_cq=?, processo=?, obs=?, updated_at=? 
-            WHERE id=?
-        """, (
-            f["code"], f["model_name"], f["cliente"], f["linha"],
-            f.get("setor", ""), f.get("fase", ""),  # 👈 agora correto
-            f["turno"], f["data"],
-            f"{f.get('lote_num', '').strip()} / {f.get('lote_padrao', '').strip()}",
-            f["quantidade"], f["revisora"], f["horario"],
-            f["po"], f.get("op", ""),
-            ",".join(request.form.getlist("status_cq")),
-            ",".join(request.form.getlist("processo")),
-            f["obs"], datetime.now().isoformat(), id
-        ))
+        # -----------------------------------------------
+        # SE FOR POST: atualizar registro
+        # -----------------------------------------------
+        if request.method == "POST":
+            f = request.form
 
-        conn.execute(
-            "INSERT INTO history (model_id, changed_at, changed_by, change_text) VALUES (?, ?, ?, ?)",
-            (id, datetime.now().isoformat(), "web_user", "Edição de modelo")
-        )
-        conn.commit()
+            # Montagem do lote (corrigido!)
+            lote_num = f.get("lote_num", "").strip()
+            lote_padrao = f.get("lote_padrao", "").strip()
+            lote_final = f"{lote_num} / {lote_padrao}"
+
+            try:
+                conn.execute("""
+                    UPDATE models 
+                    SET code=?, model_name=?, cliente=?, linha=?, setor=?, fase=?, phase_type=?, turno=?, data=?, 
+                        lote=?, quantidade=?, revisora=?, horario=?, po=?, op=?, status_cq=?, processo=?, obs=?, updated_at=?
+                    WHERE id=?
+                """, (
+                    f["code"],
+                    f["model_name"],
+                    f["cliente"],
+                    f["linha"],
+                    f.get("setor", ""),
+                    f.get("fase", ""),
+                    f.get("phase_type", "TOP_ONLY"),
+                    f["turno"],
+                    f["data"],
+                    lote_final,
+                    f["quantidade"],
+                    f["revisora"],
+                    f["horario"],
+                    f["po"],
+                    f.get("op", ""),
+                    ",".join(request.form.getlist("status_cq")),
+                    ",".join(request.form.getlist("processo")),
+                    f["obs"],
+                    datetime.now().isoformat(),
+                    id
+                ))
+            except sqlite3.IntegrityError:
+                flash("❌ Já existe um modelo com este CODE. Escolha outro.", "danger")
+                return redirect(url_for("edit", id=id))
+
+
+            # REGISTRAR HISTÓRICO
+            conn.execute(
+                "INSERT INTO history (model_id, changed_at, changed_by, change_text) VALUES (?, ?, ?, ?)",
+                (id, datetime.now().isoformat(), "web_user", "Edição de modelo")
+            )
+
+            conn.commit()
+            flash("Modelo atualizado com sucesso!", "success")
+            return redirect(url_for("index"))
+
+        # -----------------------------------------------
+        # SE FOR GET: carregar form.html com modelo
+        # -----------------------------------------------
+        lote_num, lote_padrao = "", ""
+        if model["lote"]:
+            partes = [p.strip() for p in model["lote"].split("/")]
+            if len(partes) >= 1:
+                lote_num = partes[0]
+            if len(partes) >= 2:
+                lote_padrao = partes[1]
+
+        return render_template("form.html", model=model, lote_num=lote_num, lote_padrao=lote_padrao)
+
+    except Exception as e:
+        print("Erro no edit():", e)
+        raise e
+    finally:
         conn.close()
-        flash("Modelo atualizado!", "success")
-        return redirect(url_for("index"))
 
-    conn.close()
-    return render_template("form.html", model=model)
 
 
 @app.route("/view/<int:id>", methods=["GET", "POST"])
 def view_label(id):
-    conn = get_db()
-    model = conn.execute("SELECT * FROM models WHERE id=?", (id,)).fetchone()
+    with get_db() as conn:
+        model = conn.execute("SELECT * FROM models WHERE id=?", (id,)).fetchone()
     existing_labels = conn.execute("SELECT * FROM labels WHERE model_id=? ORDER BY created_at DESC", (id,)).fetchall()
     conn.close()
     if not model:
@@ -415,29 +478,32 @@ def qr(code):
 
     # 🔹 Gera a URL completa (agora compatível com códigos únicos)
     # OBS: os terminais/físicos onde o QR será lido podem adicionar o parâmetro ?p=Ponto-01
-    qr_url = f"http://{local_ip}:5000/movimentar/{code.strip()}"
+    # <-- GERAR QR APENAS COM O CÓDIGO (SEM URL)
+    qr_payload = code.strip()   # exemplo: "203110482-25-504"
 
-    # 🔹 Gera e retorna o QR Code
-    img = qrcode.make(qr_url)
+    img = qrcode.make(qr_payload)
     buf = BytesIO()
     img.save(buf, "PNG")
     buf.seek(0)
     return send_file(buf, mimetype="image/png")
 
+
 @app.route("/movimentar", methods=["GET", "POST"])
-@app.route("/movimentar/<string:full_code>", methods=["GET", "POST"])
-def movimentar(full_code=None):
-    ponto_query = request.args.get("ponto") or request.args.get("p") or None
+def movimentar():
+    ponto_query = request.args.get("ponto") or request.args.get("p")
     model = label = None
-    lote_sufixo = None
 
-    # --- Se veio full_code pela URL ou foi digitado no POST ---
-    if request.method == "POST":
-        full_code = full_code or request.form.get("qr_code")
-
+    # Captura o QR enviado (form ou URL) e normaliza
+    full_code = request.form.get("qr_code") or request.args.get("qr_code")
     if full_code:
+        full_code = extract_real_code(full_code)
+        if not full_code:
+            flash("QR inválido", "danger")
+            return redirect(url_for("index"))
+
+        # Separa base_code e lote
         parts = full_code.split("-")
-        base_code = parts[0].strip().upper()
+        base_code = parts[0].upper()
         lote_sufixo = "-".join(parts[1:]) if len(parts) > 1 else None
         lote_formatado = normalize_lote_from_qr(lote_sufixo) if lote_sufixo else None
 
@@ -449,150 +515,150 @@ def movimentar(full_code=None):
             return redirect(url_for("index"))
         model = dict(model_row)
 
+        # Busca etiqueta correspondente
         label = find_label(conn, model["id"], lote_formatado) if lote_formatado else None
         if not label:
             cur = conn.execute(
                 "SELECT * FROM labels WHERE model_id=? ORDER BY created_at DESC LIMIT 1",
-                (model["id"],),
+                (model["id"],)
             ).fetchone()
             if cur:
                 label = dict(cur)
         conn.close()
 
-    # --- Se for envio do formulário ---
+    # Processa movimentação
     if request.method == "POST" and model:
-        acao = request.form.get("acao")  # PRODUCAO ou RECEBIMENTO
+        acao = request.form.get("acao")
         ponto = request.form.get("ponto") or ponto_query or "Ponto-?"
         quantidade = int(request.form.get("quantidade") or (label["capacidade_magazine"] if label else 0))
-
-        ponto_rule = POINT_RULES.get(ponto)
+        acao_norm = acao.strip().upper() if acao else ""
         setor_origem = (label.get("setor_atual") if label else model.get("setor")) or None
-        setor_destino = setor_origem  # padrão
-
-        # --- Lógica de destino baseada em regras ---
-        if acao == "PRODUCAO":
-            if ponto == "Ponto-07":
-                setor_destino = "EXPEDICAO"
-            elif ponto_rule and ponto_rule["type"] == "qualidade":
-                setor_destino = setor_origem  # marca como pronto, mas não muda setor
-            elif ponto_rule:
-                setor_destino = ponto_rule["setor"]
-        elif acao == "RECEBIMENTO":
-            if ponto_rule:
-                setor_destino = ponto_rule["setor"]
-
-        # --- Normaliza IM/PA ---
-        if setor_destino == "IM/PA":
-            if model.get("setor") in ["IM", "PA"]:
-                setor_destino = model.get("setor")
-            else:
-                setor_destino = "IM"
+        setor_destino = setor_origem
+        model_phase_type = (model.get("phase_type") or "TOP_ONLY").upper()
+        new_fase = None
 
         try:
             conn = get_db()
 
-            # Se tivermos uma label (origem), usamos ela como fonte de peças.
-            # Caso contrário (nenhuma label encontrada), tratamos como movimentação sobre o modelo inteiro.
-            if label:
-                # garante que a coluna remaining exista e seja int
-                remaining = int(label.get("remaining") if label.get("remaining") is not None else (label.get("capacidade_magazine") or 0))
-                transfer = int(quantidade)
+            if ponto == "Ponto-01":  # PTH
+                setor_destino = "PTH"
+                if acao_norm == "PRODUCAO" and label:
+                    remaining = int(label.get("remaining") or label.get("capacidade_magazine") or 0)
+                    transfer = quantidade if quantidade else remaining
+                    if transfer <= 0 or transfer > remaining:
+                        flash("Quantidade inválida.", "danger")
+                        conn.close()
+                        return redirect(url_for("index"))
 
-                if transfer <= 0:
+                    # Atualiza remaining da label original
+                    conn.execute(
+                        "UPDATE labels SET remaining=?, updated_at=? WHERE id=?",
+                        (remaining - transfer, datetime.now().isoformat(), label["id"])
+                    )
+
+                    # Nova label PTH → AGUARDANDO_CQ
+                    conn.execute("""INSERT INTO labels
+                        (model_id, lote, producao_total, capacidade_magazine, remaining, created_at, linked_label_id, setor_atual, fase)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 (model["id"], label["lote"], transfer, transfer, transfer,
+                                  datetime.now().isoformat(), label["id"], setor_destino, "AGUARDANDO_CQ"))
+                    new_label_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+                    # Histórico e movimentação
+                    conn.execute("INSERT INTO history (model_id, changed_at, changed_by, change_text) VALUES (?, ?, ?, ?)",
+                                 (model["id"], datetime.now().isoformat(), "terminal_movimentacao",
+                                  f"{acao} em {ponto} ({setor_origem} → {setor_destino}) - qtd: {transfer}"))
+                    register_movement(conn, model["id"], new_label_id, ponto, acao, transfer, setor_origem, setor_destino)
+
+                    conn.commit()
+                    flash(f"✅ Produção registrada no PTH ({transfer} un.) - AGUARDANDO CQ", "success")
+                    return redirect(url_for("index"))
+
+            elif ponto == "Ponto-02":  # SMT Produção
+                setor_destino = "SMT"
+                if acao_norm == "PRODUCAO":
+                    if model_phase_type == "TOP_ONLY":
+                        new_fase = "AGUARDANDO_CQ"
+                    else:  # TOP_BOTTOM
+                        top_done = int(label.get("top_done") or 0)
+                        bottom_done = int(label.get("bottom_done") or 0)
+                        if top_done == 0:
+                            conn.execute(
+                                "UPDATE labels SET top_done=1, fase=?, updated_at=? WHERE id=?",
+                                ("AGUARDANDO_BOTTOM", datetime.now().isoformat(), label["id"])
+                            )
+                            conn.commit()
+                            flash("Top produzido — aguardando Bottom.", "info")
+                            return redirect(url_for("index"))
+                        elif bottom_done == 0:
+                            conn.execute(
+                                "UPDATE labels SET bottom_done=1, fase=?, updated_at=? WHERE id=?",
+                                ("AGUARDANDO_CQ", datetime.now().isoformat(), label["id"])
+                            )
+                            conn.commit()
+                            flash("Bottom produzido — aguardando CQ.", "success")
+                            return redirect(url_for("index"))
+                        else:
+                            new_fase = "AGUARDANDO_CQ"
+
+            elif ponto == "Ponto-03":  # SMT CQ
+                setor_destino = "SMT"
+                if acao_norm in ("RECEBIMENTO", "CQ", "LIBERAR") and label:
+                    if (label.get("fase") or "").upper() in ("AGUARDANDO_CQ", "AGUARDANDO"):
+                        conn.execute("UPDATE labels SET fase=?, updated_at=? WHERE id=?",
+                                     ("DISPONIVEL", datetime.now().isoformat(), label["id"]))
+                        conn.commit()
+                        flash("✅ CQ SMT: placa liberada.", "success")
+                        return redirect(url_for("index"))
+
+            elif ponto == "Ponto-04":  # IM/PA Produção
+                setor_destino = "IM/PA"
+                if acao_norm == "PRODUCAO":
+                    new_fase = "AGUARDANDO_CQ"
+
+            elif ponto in ("Ponto-05", "Ponto-06"):  # IM/PA CQ
+                setor_destino = "IM/PA"
+                if acao_norm in ("RECEBIMENTO", "CQ", "LIBERAR") and label:
+                    if (label.get("fase") or "").upper() in ("AGUARDANDO_CQ", "AGUARDANDO"):
+                        conn.execute("UPDATE labels SET fase=?, updated_at=? WHERE id=?",
+                                     ("DISPONIVEL", datetime.now().isoformat(), label["id"]))
+                        conn.commit()
+                        flash(f"✅ CQ IM/PA: placa liberada.", "success")
+                        return redirect(url_for("index"))
+
+            elif ponto == "Ponto-07":  # Estoque / Expedição
+                setor_destino = "EXPEDICAO"
+                if acao_norm in ("PRODUCAO", "RECEBIMENTO"):
+                    new_fase = "EXPEDIDO"
+
+            # --- Fluxo genérico: abate e cria nova label ---
+            if label and ponto != "Ponto-01":  # PTH já tratado
+                remaining = int(label.get("remaining") or label.get("capacidade_magazine") or 0)
+                transfer = quantidade if quantidade else remaining
+                if transfer <= 0 or transfer > remaining:
                     flash("Quantidade inválida.", "danger")
                     conn.close()
                     return redirect(url_for("index"))
 
-                if transfer > remaining:
-                    flash(f"Quantidade solicitada ({transfer}) maior que o disponível na etiqueta ({remaining}).", "danger")
-                    conn.close()
-                    return redirect(url_for("index"))
+                conn.execute("UPDATE labels SET remaining=?, updated_at=? WHERE id=?",
+                             (remaining - transfer, datetime.now().isoformat(), label["id"]))
 
-                # decrementa remaining da etiqueta origem
-                new_remaining = remaining - transfer
-                conn.execute(
-                    "UPDATE labels SET remaining=?, updated_at=? WHERE id=?",
-                    (new_remaining, datetime.now().isoformat(), label["id"])
-                )
-
-                # se precisar, marca etiqueta origem como vazia quando remaining == 0 (opcional)
-                if new_remaining == 0:
-                    # opcional: mantém setor_atual como estava, ou marca como 'CONSUMIDO'
-                    # aqui vamos deixar setor_atual inalterado, mas pode-se adicionar um flag se desejar
-                    pass
-
-                # cria nova etiqueta no setor destino representando a quantidade transferida
-                conn.execute("""
-                    INSERT INTO labels (model_id, lote, producao_total, capacidade_magazine, remaining, created_at, linked_label_id, setor_atual, fase)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    model["id"],
-                    label["lote"],
-                    transfer,            # producao_total desta "sub-etiqueta"
-                    transfer,            # capacidade_magazine = transfer (agora este lote tem tamanho transfer)
-                    transfer,            # remaining = transfer
-                    datetime.now().isoformat(),
-                    label["id"],         # linked_label_id referencia origem
-                    setor_destino,
-                    "DISPONIVEL" if acao == "PRODUCAO" else (label.get("fase") or "AGUARDANDO")
-                ))
-
-                # pega o id da nova etiqueta inserida para histórico/moviment
+                fase_to_set = new_fase or ("DISPONIVEL" if acao_norm == "PRODUCAO" else label.get("fase") or "AGUARDANDO")
+                conn.execute("""INSERT INTO labels
+                    (model_id, lote, producao_total, capacidade_magazine, remaining, created_at, linked_label_id, setor_atual, fase, top_done, bottom_done)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                             (model["id"], label["lote"], transfer, transfer, transfer,
+                              datetime.now().isoformat(), label["id"], setor_destino, fase_to_set,
+                              int(label.get("top_done") or 0), int(label.get("bottom_done") or 0)))
                 new_label_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-            else:
-                # Não havia label encontrada: cria uma nova etiqueta diretamente no setor destino
-                transfer = int(quantidade)
-                if transfer <= 0:
-                    flash("Quantidade inválida.", "danger")
-                    conn.close()
-                    return redirect(url_for("index"))
-
-                conn.execute("""
-                    INSERT INTO labels (model_id, lote, producao_total, capacidade_magazine, remaining, created_at, linked_label_id, setor_atual, fase)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    model["id"],
-                    model.get("lote"),
-                    transfer,
-                    transfer,
-                    transfer,
-                    datetime.now().isoformat(),
-                    None,
-                    setor_destino,
-                    "DISPONIVEL" if acao == "PRODUCAO" else "AGUARDANDO"
-                ))
-
-                new_label_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                label_id = new_label_id  # para histórico
-
-            # histórico
-            conn.execute(
-                "INSERT INTO history (model_id, changed_at, changed_by, change_text) VALUES (?, ?, ?, ?)",
-                (
-                    model["id"],
-                    datetime.now().isoformat(),
-                    "terminal_movimentacao",
-                    f"{acao} em {ponto} (origem: {setor_origem} → destino: {setor_destino}) - qtd: {transfer}"
-                ),
-            )
-
-            # movimentação (registra a quantidade transferida)
-            register_movement(
-                conn,
-                model["id"],
-                new_label_id if 'new_label_id' in locals() else label_id,
-                ponto,
-                acao,
-                transfer,
-                setor_origem,
-                setor_destino,
-                created_by="terminal_movimentacao",
-            )
-
-            conn.commit()
-            flash(f"✅ {acao} registrada no {ponto} ({setor_origem} → {setor_destino}) - {transfer} un.", "success")
-
+                # Histórico e movimentação
+                conn.execute("INSERT INTO history (model_id, changed_at, changed_by, change_text) VALUES (?, ?, ?, ?)",
+                             (model["id"], datetime.now().isoformat(), "terminal_movimentacao",
+                              f"{acao} em {ponto} ({setor_origem} → {setor_destino}) - qtd: {transfer}"))
+                register_movement(conn, model["id"], new_label_id, ponto, acao, transfer, setor_origem, setor_destino)
+                conn.commit()
+                flash(f"✅ {acao} registrada no {ponto} ({transfer} un.) - {fase_to_set}", "success")
 
         except Exception as e:
             conn.rollback()
@@ -600,18 +666,24 @@ def movimentar(full_code=None):
         finally:
             conn.close()
 
-        return redirect(url_for("index"))
+    return render_template("movimentar.html", model=model, label=label, ponto=ponto_query)
 
-    # --- Renderiza a tela ---
-    return render_template(
-        "movimentar.html",
-        model=model,
-        lote_sufixo=lote_sufixo,
-        label=label,
-        ponto=ponto_query,
-        full_code=full_code,
-        header_title=ponto_query
-    )
+def extract_real_code(qr_text):
+    """
+    Retorna apenas o código real do QR (999999999-99-999),
+    ignorando todo lixo que vier junto.
+    """
+    if not qr_text:
+        return None
+
+    # remove espaços e transforma Ç/ç em ;
+    clean_text = qr_text.replace("Ç", ";").replace("ç", ";").replace(" ", "")
+
+    # 🔹 regex reforçada: qualquer sequência de 9 dígitos - 2 dígitos - 3 dígitos
+    match = re.search(r"(\d{9}-\d{2}-\d{3})", clean_text)
+    if match:
+        return match.group(1)
+    return None
 
 @app.route("/dashboard")
 def dashboard():
@@ -620,34 +692,42 @@ def dashboard():
     models = conn.execute("SELECT * FROM models ORDER BY model_name").fetchall()
     models = [dict(m) for m in models]
 
-    # Para cada modelo, consulta saldo por setor + fase
+    # Para cada modelo, consulta saldo por setor + fase (somente remaining > 0)
     dashboard_data = []
     for m in models:
         labels = conn.execute("""
             SELECT setor_atual, fase, SUM(remaining) AS saldo
             FROM labels
-            WHERE model_id=?
+            WHERE model_id=? AND remaining > 0
             GROUP BY setor_atual, fase
         """, (m["id"],)).fetchall()
 
         saldo_setores = []
         for l in labels:
             setor = l["setor_atual"] or "SEM SETOR"
-            fase = (l["fase"] or "").strip().upper()
+            fase_raw = (l["fase"] or "").strip().upper()
             saldo = int(l["saldo"] or 0)
 
-            # Regra simples de status:
-            # - Se fase == 'AGUARDANDO' -> AGUARDANDO
-            # - Else se saldo > 0 -> DISPONIVEL
-            # - Else -> AGUARDANDO
-            if fase == "AGUARDANDO" or fase == "":
+            # Mapeamento de exibição mais amigável
+            if fase_raw in ("AGUARDANDO_BOTTOM",):
+                display_fase = "Top produzido → Aguardando Bottom"
                 status = "AGUARDANDO"
+            elif fase_raw in ("AGUARDANDO_CQ",):
+                display_fase = "Aguardando Liberação CQ"
+                status = "AGUARDANDO"
+            elif fase_raw in ("DISPONIVEL",):
+                display_fase = "Disponível (Liberado)"
+                status = "DISPONIVEL"
+            elif fase_raw in ("EXPEDIDO","EXPEDICAO"):
+                display_fase = "Expedido"
+                status = "EXPEDIDO"
             else:
-                status = "DISPONIVEL" if saldo > 0 else "AGUARDANDO"
+                display_fase = fase_raw if fase_raw else "AGUARDANDO"
+                status = "AGUARDANDO" if fase_raw in ("","AGUARDANDO") else "DISPONIVEL" if saldo>0 else "AGUARDANDO"
 
             saldo_setores.append({
                 "setor": setor,
-                "fase": fase if fase else "",
+                "fase": display_fase,
                 "saldo": saldo,
                 "status": status
             })
@@ -662,8 +742,8 @@ def dashboard():
 
 @app.route("/history/<int:id>")
 def history(id):
-    conn = get_db()
-    model = conn.execute("SELECT * FROM models WHERE id=?", (id,)).fetchone()
+    with get_db() as conn:
+        model = conn.execute("SELECT * FROM models WHERE id=?", (id,)).fetchone()
     hist = conn.execute(
         "SELECT * FROM history WHERE model_id=? ORDER BY changed_at DESC LIMIT 10",
         (id,)

@@ -42,6 +42,15 @@
       </div>
 
       <div class="col-md-2">
+  <label>Tipo de Fase</label>
+  <select name="phase_type" class="form-control" required>
+    {% for pt in ['TOP_ONLY', 'TOP_BOTTOM'] %}
+      <option value="{{ pt }}" {% if model and model['phase_type'] == pt %}selected{% endif %}>{{ pt.replace('_', ' ') }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+      <div class="col-md-2">
         <label>Turno</label>
         <select name="turno" class="form-control" required>
           {% for t in ['1° TURNO', '2° TURNO', '3° TURNO'] %}
